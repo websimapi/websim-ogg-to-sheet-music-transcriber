@@ -36,67 +36,19 @@
         </div>
 
         <div class="mixer-area">
-            <h3>Advanced Isolation & Dynamics</h3>
-            <p class="small-text">Fine-tune audio filtering to isolate specific instruments.</p>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3>Isolation Tracks</h3>
+                <button id="addTrackBtn" class="btn primary small">+ Add Track</button>
+            </div>
+            <p class="small-text">Create multiple tracks to isolate different instruments/parts.</p>
             
-            <div class="filter-controls">
-                <div class="control-row">
-                    <label>Detection Threshold (Gate)</label>
-                    <input type="range" id="thresholdInput" min="0" max="0.2" step="0.001" value="0.03">
-                </div>
-                
-                <div class="control-row mode-select">
-                    <label>Filter Mode:</label>
-                    <select id="filterMode">
-                        <option value="eq">3-Band EQ</option>
-                        <option value="bandpass">Precision Focus (Bandpass)</option>
-                    </select>
-                </div>
-
-                <!-- EQ Controls -->
-                <div id="eqControls" class="sliders">
-                    <div class="slider-group">
-                        <label>Low</label>
-                        <input type="range" id="bassGain" min="-30" max="10" value="0">
-                    </div>
-                    <div class="slider-group">
-                        <label>Mid</label>
-                        <input type="range" id="midGain" min="-30" max="10" value="0">
-                    </div>
-                    <div class="slider-group">
-                        <label>High</label>
-                        <input type="range" id="highGain" min="-30" max="10" value="0">
-                    </div>
-                    <div class="slider-group checkbox-group">
-                         <label>Auto-EQ</label>
-                         <label class="switch">
-                            <input type="checkbox" id="autoFilterBtn">
-                            <span class="slider round"></span>
-                        </label>
-                    </div>
-                </div>
-
-                <!-- Bandpass Controls (Hidden by default) -->
-                <div id="bandpassControls" class="sliders hidden">
-                    <div class="slider-group wide">
-                        <label>Center Frequency (<span id="freqVal">1000</span>Hz)</label>
-                        <input type="range" id="bpFreq" min="50" max="5000" step="10" value="1000">
-                    </div>
-                    <div class="slider-group">
-                        <label>Width (Q)</label>
-                        <input type="range" id="bpQ" min="0.1" max="10" step="0.1" value="1">
-                    </div>
-                </div>
+            <div id="tracksContainer">
+                <!-- Tracks will be injected here -->
             </div>
         </div>
 
-        <div class="visualization-area">
-            <canvas id="frequencyCanvas" height="60"></canvas>
-            <div class="note-display">Detected: <span id="currentNote">--</span></div>
-        </div>
-
         <div class="sheet-music-container" id="sheetContainer">
-            <div id="canvasWrapper"></div>
+            <!-- Scores will be injected here -->
         </div>
     </div>
 

@@ -31,8 +31,11 @@ export class ScoreRenderer {
         // Determine clef approximately
         let clef = "treble";
         if (noteData.octave < 4) clef = "bass";
+        
+        // Use detected duration or default to 'q'
+        const duration = noteData.duration || "q";
 
-        this.notesBuffer.push({ keys: [key], duration: "q", clef: clef });
+        this.notesBuffer.push({ keys: [key], duration: duration, clef: clef });
         
         // Limit buffer to fit on screen roughly (last 16 notes)
         if (this.notesBuffer.length > 32) {
