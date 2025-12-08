@@ -1,4 +1,4 @@
-import { Factory } from "vexflow";
+import { Factory, Formatter } from "vexflow";
 
 export class ScoreRenderer {
     constructor(elementId) {
@@ -73,18 +73,23 @@ export class ScoreRenderer {
            return this.vf.StaveNote({ keys: n.keys, duration: n.duration, clef: "treble" }); // Force treble for simplicity of single stave, visually adjust later
         });
 
-        // Auto-beaming
-        // const voice = score.voice(notes);
-        // this.vf.Beam.generateBeams(voice.getTickables());
-
         // To make it look like a continuous stream, we just add one long stave
         const stave = this.vf.Stave({ x: 10, y: 50, width: requiredWidth - 20 });
         stave.addClef("treble");
 
-        const voice = this.vf.Voice().addTickables(notes);
+        // Create a voice that dynamically fits the number of notes in the buffer
+        // Default is 4/4 which crashes if buffer > 4.
+        const voice = this.vf.Voice({ 
+            num_beats: Math.max(1, this.notesBuffer.length), 
+            beat_value: 4 
+        });
+        
+        // Disable strict timing to prevent crashes if note durations don't perfectly align
+        voice.setStrict(false);
+        voice.addTickables(notes);
 
         // Formatting
-        this.vf.Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
+        new Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
 
         stave.setContext(this.vf.getContext()).draw();
         voice.draw(this.vf.getContext(), stave);
