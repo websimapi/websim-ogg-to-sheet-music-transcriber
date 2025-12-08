@@ -84,7 +84,7 @@ export class ScoreRenderer {
         const voice = this.vf.Voice().addTickables(notes);
 
         // Formatting
-        new this.vf.Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
+        this.vf.Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
 
         stave.setContext(this.vf.getContext()).draw();
         voice.draw(this.vf.getContext(), stave);

@@ -134,12 +134,16 @@ function analyzeLoop() {
         // Add to sheet music if enough time has passed and note is stable
         const now = Date.now();
         if (now - lastNoteTime > NOTE_THRESHOLD_MS) {
-            renderer.addNote(noteData);
-            lastNoteTime = now;
+            try {
+                renderer.addNote(noteData);
+                lastNoteTime = now;
 
-            // Auto scroll to right
-            const container = document.getElementById('sheetContainer');
-            container.scrollLeft = container.scrollWidth;
+                // Auto scroll to right
+                const container = document.getElementById('sheetContainer');
+                container.scrollLeft = container.scrollWidth;
+            } catch (e) {
+                console.error("Sheet music rendering error:", e);
+            }
         }
     } else {
         noteDisplay.textContent = "--";
