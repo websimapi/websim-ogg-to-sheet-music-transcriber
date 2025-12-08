@@ -1,7 +1,7 @@
 // Pitch detection algorithm using auto-correlation
 // This helps find the fundamental frequency of the audio signal
 
-export function autoCorrelate(buf, sampleRate) {
+export function autoCorrelate(buf, sampleRate, threshold = 0.01) {
     // Implements the ACF2+ algorithm
     let SIZE = buf.length;
     let rms = 0;
@@ -13,7 +13,7 @@ export function autoCorrelate(buf, sampleRate) {
     rms = Math.sqrt(rms / SIZE);
 
     // Noise gate - if signal is too quiet, return -1
-    if (rms < 0.01) return -1;
+    if (rms < threshold) return -1;
 
     let r1 = 0, r2 = SIZE - 1, thres = 0.2;
     for (let i = 0; i < SIZE / 2; i++)

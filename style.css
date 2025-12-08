@@ -189,6 +189,11 @@ input:checked + .slider:before {
     display: flex;
     justify-content: space-between;
     gap: 10px;
+    width: 100%;
+}
+
+.sliders.hidden {
+    display: none;
 }
 
 .slider-group {
@@ -196,6 +201,35 @@ input:checked + .slider:before {
     flex-direction: column;
     align-items: center;
     flex: 1;
+}
+
+.slider-group.wide {
+    flex: 2;
+}
+
+.control-row {
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.control-row label {
+    font-size: 0.8rem;
+    color: #aaa;
+}
+
+.mode-select select {
+    padding: 5px;
+    background: #333;
+    color: white;
+    border: 1px solid #555;
+    border-radius: 4px;
+}
+
+.checkbox-group {
+    justify-content: center;
+    align-items: center;
 }
 
 .slider-group label {

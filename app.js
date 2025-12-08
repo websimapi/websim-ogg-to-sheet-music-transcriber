@@ -10,7 +10,9 @@ let buffer;
 let isPlaying = false;
 let animationId;
 let filters = {};
-let isAutoFilterMode = false; // State for auto mode
+let bandpassFilter;
+let isAutoFilterMode = false; 
+let filterMode = 'eq'; // 'eq' or 'bandpass'
 const renderer = new ScoreRenderer('canvasWrapper');
 
 // --- Elements ---
@@ -27,6 +29,15 @@ const noteDisplay = document.getElementById('currentNote');
 const canvas = document.getElementById('frequencyCanvas');
 const canvasCtx = canvas.getContext('2d');
 
+// New Controls
+const thresholdInput = document.getElementById('thresholdInput');
+const filterModeSelect = document.getElementById('filterMode');
+const eqControls = document.getElementById('eqControls');
+const bandpassControls = document.getElementById('bandpassControls');
+const bpFreqInput = document.getElementById('bpFreq');
+const bpQInput = document.getElementById('bpQ');
+const freqValDisplay = document.getElementById('freqVal');
+
 // --- Initialization ---
 async function initAudioContext() {
     if (!audioCtx) {
@@ -39,19 +50,18 @@ async function initAudioContext() {
 
 async function setupAudioChain(audioBuffer) {
     if (sourceNode) {
-        sourceNode.disconnect();
-        sourceNode.stop();
+        try { sourceNode.disconnect(); sourceNode.stop(); } catch(e){}
     }
 
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
 
-    // Create pre-analyser for Auto Mode detection
+    // 1. Pre-analyser (for Auto Logic source)
     preAnalyser = audioCtx.createAnalyser();
     preAnalyser.fftSize = 2048;
     sourceNode.connect(preAnalyser);
 
-    // Create filters (Eq)
+    // 2. Create EQ Filters
     const bassFilter = audioCtx.createBiquadFilter();
     bassFilter.type = 'lowshelf';
     bassFilter.frequency.value = 250;
@@ -65,19 +75,30 @@ async function setupAudioChain(audioBuffer) {
     highFilter.type = 'highshelf';
     highFilter.frequency.value = 4000;
 
+    // Chain EQ: Source -> Bass -> Mid -> High
+    // We won't connect High to analyser yet, we do that dynamically
+
+    // 3. Create Bandpass Filter
+    bandpassFilter = audioCtx.createBiquadFilter();
+    bandpassFilter.type = 'bandpass';
+    bandpassFilter.frequency.value = parseFloat(bpFreqInput.value);
+    bandpassFilter.Q.value = parseFloat(bpQInput.value);
+
+    // 4. Analyser (Final output node before destination)
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.5;
 
-    // Connect chain: Source -> Bass -> Mid -> High -> Analyser -> Destination
-    sourceNode.connect(bassFilter);
-    bassFilter.connect(midFilter);
-    midFilter.connect(highFilter);
-    highFilter.connect(analyser);
-    highFilter.connect(audioCtx.destination); // Connect last filter to speakers
-
+    // Store filters
     filters = { bass: bassFilter, mid: midFilter, high: highFilter };
     
-    // Reset sliders or update filters based on current UI
+    // 5. Connect based on current mode
+    applyRouting();
+
+    // 6. Connect Analyser to Speakers
+    analyser.connect(audioCtx.destination);
+
+    // Reset sliders
     updateFilters();
 
     sourceNode.onended = () => {
@@ -95,16 +116,46 @@ async function setupAudioChain(audioBuffer) {
     analyzeLoop();
 }
 
+function applyRouting() {
+    if (!sourceNode || !filters.bass) return;
+
+    // Disconnect everything first to be safe
+    try { sourceNode.disconnect(filters.bass); } catch(e){}
+    try { sourceNode.disconnect(bandpassFilter); } catch(e){}
+    try { filters.high.disconnect(); } catch(e){}
+    try { bandpassFilter.disconnect(); } catch(e){}
+
+    // Reconnect pre-analyser (always connected)
+    sourceNode.connect(preAnalyser);
+
+    if (filterMode === 'eq') {
+        // Source -> Bass -> Mid -> High -> Analyser
+        sourceNode.connect(filters.bass);
+        filters.bass.connect(filters.mid);
+        filters.mid.connect(filters.high);
+        filters.high.connect(analyser);
+    } else {
+        // Source -> Bandpass -> Analyser
+        sourceNode.connect(bandpassFilter);
+        bandpassFilter.connect(analyser);
+    }
+}
+
 function updateFilters() {
     if(!filters.bass) return;
     
-    // In auto mode, we don't read from sliders, we write to them (visually) 
-    // but the actual values are set in the loop. 
-    // However, if manual, we read sliders.
+    // EQ Updates
     if (!isAutoFilterMode) {
         filters.bass.gain.value = parseFloat(bassInput.value);
         filters.mid.gain.value = parseFloat(midInput.value);
         filters.high.gain.value = parseFloat(highInput.value);
+    }
+
+    // Bandpass Updates
+    if (bandpassFilter) {
+        bandpassFilter.frequency.value = parseFloat(bpFreqInput.value);
+        bandpassFilter.Q.value = parseFloat(bpQInput.value);
+        freqValDisplay.textContent = bpFreqInput.value;
     }
 }
 
@@ -171,33 +222,50 @@ function analyzeLoop() {
         highInput.value = filters.high.gain.value;
     }
 
-    // 1. Visualizer (Oscilloscope)
+    // 1. Visualizer (Spectrum)
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Float32Array(bufferLength);
+    const byteData = new Uint8Array(bufferLength);
+    
+    // Get time domain for pitch detection (needs waveform)
     analyser.getFloatTimeDomainData(dataArray);
+    
+    // Get freq domain for visualization (needs spectrum)
+    analyser.getByteFrequencyData(byteData);
 
-    canvasCtx.fillStyle = 'rgb(0, 0, 0)';
+    canvasCtx.fillStyle = '#000';
     canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-    canvasCtx.lineWidth = 2;
-    canvasCtx.strokeStyle = 'rgb(92, 107, 192)'; // Primary color
-    canvasCtx.beginPath();
+    
+    const barWidth = (canvas.width / bufferLength) * 2.5;
+    let barX = 0;
 
-    const sliceWidth = canvas.width * 1.0 / bufferLength;
-    let x = 0;
+    // Draw Frequency Bars
+    for(let i = 0; i < bufferLength; i++) {
+        const barHeight = (byteData[i] / 255) * canvas.height;
+        
+        // Color based on height/intensity
+        canvasCtx.fillStyle = `rgb(${byteData[i] + 50}, 100, 200)`;
+        canvasCtx.fillRect(barX, canvas.height - barHeight, barWidth, barHeight);
 
-    for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] * 200.0; // amplify for visual
-        const y = canvas.height / 2 + v;
-
-        if (i === 0) canvasCtx.moveTo(x, y);
-        else canvasCtx.lineTo(x, y);
-        x += sliceWidth;
+        barX += barWidth + 1;
     }
-    canvasCtx.lineTo(canvas.width, canvas.height / 2);
+
+    // Overlay Detection Threshold Line (Approximation for Visual Feedback)
+    const threshVal = parseFloat(thresholdInput.value);
+    // Visualize threshold just as a static line
+    // Since threshold is RMS amplitude (0-1) and this is FFT, it's not 1:1, 
+    // but useful to show the user "higher is less sensitive"
+    const displayThresh = Math.min(1, threshVal * 5); // scale for display
+    const threshY = canvas.height - (displayThresh * canvas.height); 
+    
+    canvasCtx.strokeStyle = 'rgba(255, 50, 50, 0.7)';
+    canvasCtx.beginPath();
+    canvasCtx.moveTo(0, threshY);
+    canvasCtx.lineTo(canvas.width, threshY);
     canvasCtx.stroke();
 
     // 2. Pitch Detection
-    const frequency = autoCorrelate(dataArray, audioCtx.sampleRate);
+    const frequency = autoCorrelate(dataArray, audioCtx.sampleRate, threshVal);
     const noteData = frequencyToNote(frequency);
 
     if (noteData) {
@@ -288,23 +356,33 @@ clearBtn.addEventListener('click', () => {
 // Auto Filter Listener
 autoFilterBtn.addEventListener('change', (e) => {
     isAutoFilterMode = e.target.checked;
-    if (isAutoFilterMode) {
-        bassInput.disabled = true;
-        midInput.disabled = true;
-        highInput.disabled = true;
+    bassInput.disabled = isAutoFilterMode;
+    midInput.disabled = isAutoFilterMode;
+    highInput.disabled = isAutoFilterMode;
+    if(!isAutoFilterMode) updateFilters();
+});
+
+// Filter Mode Switch
+filterModeSelect.addEventListener('change', (e) => {
+    filterMode = e.target.value;
+    if (filterMode === 'eq') {
+        eqControls.classList.remove('hidden');
+        bandpassControls.classList.add('hidden');
     } else {
-        bassInput.disabled = false;
-        midInput.disabled = false;
-        highInput.disabled = false;
-        // Snap filters back to slider values immediately
-        updateFilters();
+        eqControls.classList.add('hidden');
+        bandpassControls.classList.remove('hidden');
     }
+    applyRouting();
 });
 
 // EQ Listeners
 bassInput.addEventListener('input', updateFilters);
 midInput.addEventListener('input', updateFilters);
 highInput.addEventListener('input', updateFilters);
+
+// Bandpass Listeners
+bpFreqInput.addEventListener('input', updateFilters);
+bpQInput.addEventListener('input', updateFilters);
 
 // Initial render of empty stave
 setTimeout(() => renderer.render(), 500);
