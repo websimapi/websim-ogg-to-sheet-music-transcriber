@@ -5,10 +5,12 @@ import { ScoreRenderer } from './vexflow-renderer.js';
 let audioCtx;
 let sourceNode;
 let analyser;
+let preAnalyser; // Analyser before filters for detection
 let buffer;
 let isPlaying = false;
 let animationId;
 let filters = {};
+let isAutoFilterMode = false; // State for auto mode
 const renderer = new ScoreRenderer('canvasWrapper');
 
 // --- Elements ---
@@ -17,6 +19,7 @@ const loadDemoBtn = document.getElementById('loadDemoBtn');
 const playBtn = document.getElementById('playBtn');
 const pauseBtn = document.getElementById('pauseBtn');
 const clearBtn = document.getElementById('clearBtn');
+const autoFilterBtn = document.getElementById('autoFilterBtn');
 const bassInput = document.getElementById('bassGain');
 const midInput = document.getElementById('midGain');
 const highInput = document.getElementById('highGain');
@@ -43,6 +46,11 @@ async function setupAudioChain(audioBuffer) {
     sourceNode = audioCtx.createBufferSource();
     sourceNode.buffer = audioBuffer;
 
+    // Create pre-analyser for Auto Mode detection
+    preAnalyser = audioCtx.createAnalyser();
+    preAnalyser.fftSize = 2048;
+    sourceNode.connect(preAnalyser);
+
     // Create filters (Eq)
     const bassFilter = audioCtx.createBiquadFilter();
     bassFilter.type = 'lowshelf';
@@ -68,6 +76,8 @@ async function setupAudioChain(audioBuffer) {
     highFilter.connect(audioCtx.destination); // Connect last filter to speakers
 
     filters = { bass: bassFilter, mid: midFilter, high: highFilter };
+    
+    // Reset sliders or update filters based on current UI
     updateFilters();
 
     sourceNode.onended = () => {
@@ -87,9 +97,20 @@ async function setupAudioChain(audioBuffer) {
 
 function updateFilters() {
     if(!filters.bass) return;
-    filters.bass.gain.value = parseFloat(bassInput.value);
-    filters.mid.gain.value = parseFloat(midInput.value);
-    filters.high.gain.value = parseFloat(highInput.value);
+    
+    // In auto mode, we don't read from sliders, we write to them (visually) 
+    // but the actual values are set in the loop. 
+    // However, if manual, we read sliders.
+    if (!isAutoFilterMode) {
+        filters.bass.gain.value = parseFloat(bassInput.value);
+        filters.mid.gain.value = parseFloat(midInput.value);
+        filters.high.gain.value = parseFloat(highInput.value);
+    }
+}
+
+// Helper to smooth values
+function lerp(start, end, amt) {
+    return (1 - amt) * start + amt * end;
 }
 
 // --- Analysis & Render Loop ---
@@ -98,6 +119,57 @@ const NOTE_THRESHOLD_MS = 250; // Minimum time between new notes (approx 16th no
 
 function analyzeLoop() {
     if (!isPlaying) return;
+
+    // --- Auto Filter Logic ---
+    if (isAutoFilterMode && preAnalyser && filters.bass) {
+        const preBufferLength = preAnalyser.frequencyBinCount;
+        const preData = new Uint8Array(preBufferLength);
+        preAnalyser.getByteFrequencyData(preData);
+
+        // Calculate energy in bands
+        // Bin size = 44100 / 2048 = ~21.5 Hz
+        // Bass: 0 - 250Hz -> bins 0 - 11
+        // Mid: 250 - 4000Hz -> bins 12 - 185
+        // High: 4000Hz+ -> bins 186 - 1023
+        
+        let bassEnergy = 0;
+        let midEnergy = 0;
+        let highEnergy = 0;
+
+        for (let i = 0; i < 12; i++) bassEnergy += preData[i];
+        for (let i = 12; i < 186; i++) midEnergy += preData[i];
+        for (let i = 186; i < preBufferLength; i++) highEnergy += preData[i];
+
+        // Normalize (Average energy per bin)
+        bassEnergy /= 12;
+        midEnergy /= (186 - 12);
+        highEnergy /= (preBufferLength - 186);
+
+        // Determine targets based on dominance
+        // We boost the dominant and cut the others slightly
+        let targetBass = -10;
+        let targetMid = -10;
+        let targetHigh = -10;
+
+        if (bassEnergy > midEnergy && bassEnergy > highEnergy) {
+            targetBass = 5;
+        } else if (midEnergy > bassEnergy && midEnergy > highEnergy) {
+            targetMid = 5;
+        } else {
+            targetHigh = 5;
+        }
+
+        // Apply with smoothing (lerp)
+        const smoothFactor = 0.1;
+        filters.bass.gain.value = lerp(filters.bass.gain.value, targetBass, smoothFactor);
+        filters.mid.gain.value = lerp(filters.mid.gain.value, targetMid, smoothFactor);
+        filters.high.gain.value = lerp(filters.high.gain.value, targetHigh, smoothFactor);
+
+        // Update UI sliders to reflect what's happening
+        bassInput.value = filters.bass.gain.value;
+        midInput.value = filters.mid.gain.value;
+        highInput.value = filters.high.gain.value;
+    }
 
     // 1. Visualizer (Oscilloscope)
     const bufferLength = analyser.frequencyBinCount;
@@ -131,7 +203,8 @@ function analyzeLoop() {
     if (noteData) {
         noteDisplay.textContent = `${noteData.name} (${Math.round(noteData.frequency)}Hz)`;
 
-        // Add to sheet music if enough time has passed and note is stable
+        // Only add note if confidence/volume is decent (simple gate)
+        // using existing pitch logic
         const now = Date.now();
         if (now - lastNoteTime > NOTE_THRESHOLD_MS) {
             try {
@@ -210,6 +283,22 @@ pauseBtn.addEventListener('click', () => {
 clearBtn.addEventListener('click', () => {
     renderer.reset();
     renderer.render();
+});
+
+// Auto Filter Listener
+autoFilterBtn.addEventListener('change', (e) => {
+    isAutoFilterMode = e.target.checked;
+    if (isAutoFilterMode) {
+        bassInput.disabled = true;
+        midInput.disabled = true;
+        highInput.disabled = true;
+    } else {
+        bassInput.disabled = false;
+        midInput.disabled = false;
+        highInput.disabled = false;
+        // Snap filters back to slider values immediately
+        updateFilters();
+    }
 });
 
 // EQ Listeners
