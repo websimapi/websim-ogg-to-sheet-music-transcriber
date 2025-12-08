@@ -3,97 +3,110 @@ import { Factory, Formatter } from "vexflow";
 export class ScoreRenderer {
     constructor(elementId) {
         this.container = document.getElementById(elementId);
-        this.notesBuffer = [];
+        this.tracks = {}; // { trackId: { notes: [], name: '...' } }
         this.context = null;
         this.vf = null;
-        this.width = 600; // Start with decent width
-        this.height = 200;
+        this.width = 600;
+        this.height = 200; // Will be dynamic
     }
 
     reset() {
-        this.notesBuffer = [];
+        for(let id in this.tracks) {
+            this.tracks[id].notes = [];
+        }
         this.container.innerHTML = "";
     }
 
-    addNote(noteData) {
-        // Debounce/limit: don't add the exact same note consecutively too fast
-        // to avoid "C C C C C" for a sustained note.
-        // Simple logic: if last note is same, ignore (unless enough time passed - not handled here for simplicity)
-        const lastNote = this.notesBuffer[this.notesBuffer.length - 1];
+    registerTrack(id, name) {
+        if (!this.tracks[id]) {
+            this.tracks[id] = { notes: [], name: name || `Part ${id}` };
+        } else {
+            this.tracks[id].name = name;
+        }
+    }
+
+    removeTrack(id) {
+        delete this.tracks[id];
+        this.render();
+    }
+
+    addNote(noteData, trackId) {
+        if (!this.tracks[trackId]) return;
+
+        const buffer = this.tracks[trackId].notes;
+        const lastNote = buffer[buffer.length - 1];
+        
         if (lastNote && lastNote.name === noteData.name) {
             return; 
         }
 
-        // Add to buffer
-        // Vexflow keys format: "c/4"
         const key = `${noteData.note.toLowerCase()}/${noteData.octave}`;
-        const duration = noteData.duration || "q";
+        let clef = "treble";
+        if (noteData.octave < 3) clef = "bass"; // Better clef split
+
+        buffer.push({ keys: [key], duration: "q", clef: clef, noteData: noteData });
         
-        // Determine clef approximately (simple logic)
-        let clef = "treble"; 
-        
-        // Push note
-        this.notesBuffer.push({ keys: [key], duration: duration, clef: clef });
-        
-        // Limit buffer size to prevent memory issues, but allow more for long sequences
-        if (this.notesBuffer.length > 50) {
-            this.notesBuffer.shift();
+        if (buffer.length > 32) {
+            buffer.shift();
         }
 
         this.render();
     }
 
     render() {
-        if (!this.container) return;
-        this.container.innerHTML = ""; // Clear SVG
+        this.container.innerHTML = "";
+        
+        const trackIds = Object.keys(this.tracks);
+        if (trackIds.length === 0) return;
 
-        // Calculate total beats for width estimation (rough)
-        // q=1, h=2, w=4, 8=0.5, 16=0.25
-        const durMap = { 'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25 };
-        let totalBeats = 0;
-        this.notesBuffer.forEach(n => totalBeats += (durMap[n.duration] || 1));
+        // Calculate max notes to determine width
+        let maxNotes = 0;
+        trackIds.forEach(id => {
+            if(this.tracks[id].notes.length > maxNotes) maxNotes = this.tracks[id].notes.length;
+        });
 
-        // Dynamic width
-        const pixelPerBeat = 50;
-        const requiredWidth = Math.max(this.container.clientWidth, totalBeats * pixelPerBeat + 100);
+        const requiredWidth = Math.max(this.container.clientWidth, maxNotes * 40 + 100);
+        const staveHeight = 120;
+        const totalHeight = trackIds.length * staveHeight + 50;
 
         this.vf = new Factory({
-            renderer: { elementId: this.container.id, width: requiredWidth, height: this.height }
+            renderer: { elementId: this.container.id, width: requiredWidth, height: totalHeight }
         });
 
-        const score = this.vf.EasyScore();
-        const system = this.vf.System();
+        const context = this.vf.getContext();
+        let yPos = 20;
 
-        if (this.notesBuffer.length === 0) {
-            // Draw empty stave
-            system.addStave({
-                voices: [score.voice(score.notes('b4/q/r, b4/q/r, b4/q/r, b4/q/r', { stem: 'up' }))]
-            }).addClef('treble').addTimeSignature('4/4');
-            this.vf.draw();
-            return;
-        }
+        trackIds.forEach((id, index) => {
+            const track = this.tracks[id];
+            
+            // Draw Stave
+            const stave = this.vf.Stave({ x: 10, y: yPos, width: requiredWidth - 20 });
+            
+            // Determine clef based on majority of notes or default to treble
+            // Simple logic: just force treble for now unless majority are low, but dynamic clef is tricky in single stave
+            stave.addClef("treble");
+            stave.setText(track.name, 'default', { shift_y: -10 });
+            
+            stave.setContext(context).draw();
 
-        // Map buffer to VexFlow StaveNotes
-        const notes = this.notesBuffer.map(n => {
-           return this.vf.StaveNote({ keys: n.keys, duration: n.duration, clef: "treble" });
+            if (track.notes.length > 0) {
+                const notes = track.notes.map(n => {
+                    return this.vf.StaveNote({ keys: n.keys, duration: n.duration, clef: "treble" });
+                });
+
+                const voice = this.vf.Voice({ 
+                    num_beats: Math.max(1, track.notes.length), 
+                    beat_value: 4 
+                });
+                
+                voice.setStrict(false);
+                voice.addTickables(notes);
+
+                new Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
+                voice.draw(context, stave);
+            }
+
+            yPos += staveHeight;
         });
-
-        // Continuous stave
-        const stave = this.vf.Stave({ x: 10, y: 50, width: requiredWidth - 20 });
-        stave.addClef("treble");
-
-        // Voice
-        const voice = this.vf.Voice({ 
-            num_beats: Math.max(1, totalBeats), 
-            beat_value: 4 
-        });
-        
-        voice.setStrict(false); // Allow arbitrary beats
-        voice.addTickables(notes);
-
-        new Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
-
-        stave.setContext(this.vf.getContext()).draw();
-        voice.draw(this.vf.getContext(), stave);
     }
 }
