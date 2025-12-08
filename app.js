@@ -3,311 +3,353 @@ import { ScoreRenderer } from './vexflow-renderer.js';
 
 // --- State ---
 let audioCtx;
-let buffer;
+let sourceNode;
+let audioBuffer;
 let isPlaying = false;
 let animationId;
-let tracks = [];
-let nextTrackId = 1;
+let playbackSpeed = 1.0;
 
-// --- Elements ---
+// Track Management
+let tracks = [];
+const tracksContainer = document.getElementById('tracksContainer');
+const trackTemplate = document.getElementById('trackTemplate');
+
+// --- Global Elements ---
 const audioInput = document.getElementById('audioInput');
 const loadDemoBtn = document.getElementById('loadDemoBtn');
 const playBtn = document.getElementById('playBtn');
 const pauseBtn = document.getElementById('pauseBtn');
-const clearBtn = document.getElementById('clearBtn');
-const tracksContainer = document.getElementById('tracksContainer');
+const resetBtn = document.getElementById('resetBtn');
 const addTrackBtn = document.getElementById('addTrackBtn');
-const sheetContainer = document.getElementById('sheetContainer');
+const speedInput = document.getElementById('speedInput');
+const speedVal = document.getElementById('speedVal');
 
 // --- Track Class ---
 class Track {
-    constructor(id, savedState = null) {
+    constructor(id, savedSettings = null) {
         this.id = id;
-        this.settings = savedState || {
+        this.settings = savedSettings || {
+            filterMode: 'eq',
             threshold: 0.03,
-            filterMode: 'eq', // 'eq' or 'bandpass'
             eq: { bass: 0, mid: 0, high: 0 },
-            bp: { freq: 1000, q: 1 }
+            bp: { freq: 1000, q: 1.0 }
         };
         
-        this.nodes = {
-            source: null,
-            filters: {}, // bass, mid, high, bandpass
-            analyser: null
-        };
+        // State
+        this.currentNote = null;
+        this.noteStartTime = 0;
+        this.renderer = null;
 
-        this.analysis = {
-            currentNote: null,
-            noteStartTime: 0,
-            lastFreq: -1
-        };
-
-        // Create UI
-        this.elements = this.createUI();
+        // Audio Nodes
+        this.analyser = null;
+        this.filters = {};
         
-        // Create Renderer
-        this.renderer = new ScoreRenderer(this.elements.scoreId);
+        this.element = this.renderDOM();
+        this.initRenderer();
+        this.bindEvents();
     }
 
-    createUI() {
-        const div = document.createElement('div');
-        div.className = 'track-module';
-        div.innerHTML = `
-            <div class="track-header">
-                <span class="track-title">Track ${this.id}</span>
-                <button class="close-track-btn">Remove</button>
-            </div>
-            
-            <div class="filter-controls">
-                <div class="control-row">
-                    <label>Gate Threshold</label>
-                    <input type="range" class="thresh-slider" min="0" max="0.2" step="0.001" value="${this.settings.threshold}">
-                </div>
-                
-                <div class="control-row mode-select">
-                    <label>Mode:</label>
-                    <select class="mode-select-input">
-                        <option value="eq" ${this.settings.filterMode === 'eq' ? 'selected' : ''}>3-Band EQ</option>
-                        <option value="bandpass" ${this.settings.filterMode === 'bandpass' ? 'selected' : ''}>Focus (Bandpass)</option>
-                    </select>
-                </div>
-
-                <div class="eq-controls sliders ${this.settings.filterMode === 'eq' ? '' : 'hidden'}">
-                    <div class="slider-group"><label>Low</label><input type="range" class="bass-slider" min="-30" max="10" value="${this.settings.eq.bass}"></div>
-                    <div class="slider-group"><label>Mid</label><input type="range" class="mid-slider" min="-30" max="10" value="${this.settings.eq.mid}"></div>
-                    <div class="slider-group"><label>High</label><input type="range" class="high-slider" min="-30" max="10" value="${this.settings.eq.high}"></div>
-                </div>
-
-                <div class="bp-controls sliders ${this.settings.filterMode === 'bandpass' ? '' : 'hidden'}">
-                    <div class="slider-group wide"><label>Freq</label><input type="range" class="bp-freq-slider" min="50" max="5000" step="10" value="${this.settings.bp.freq}"></div>
-                    <div class="slider-group"><label>Q</label><input type="range" class="bp-q-slider" min="0.1" max="10" step="0.1" value="${this.settings.bp.q}"></div>
-                </div>
-            </div>
-
-            <div class="visualization-area" style="margin-top:10px;">
-                <canvas width="300" height="40" class="track-canvas" style="width:100%; height:40px;"></canvas>
-                <div class="note-display" style="top:auto; bottom:2px; right:2px; font-size:0.7rem;">--</div>
-            </div>
-        `;
-
-        // Create Score Container
-        const scoreDiv = document.createElement('div');
-        scoreDiv.className = 'score-wrapper';
-        const scoreId = `score_track_${this.id}_${Math.random().toString(36).substr(2, 5)}`;
-        scoreDiv.id = scoreId;
-        scoreDiv.innerHTML = `<span class="track-score-label">T${this.id}</span>`;
-        sheetContainer.appendChild(scoreDiv);
-
-        tracksContainer.appendChild(div);
-
-        // Bind Events
-        const removeBtn = div.querySelector('.close-track-btn');
-        removeBtn.onclick = () => removeTrack(this.id);
-
-        const threshSlider = div.querySelector('.thresh-slider');
-        threshSlider.oninput = (e) => { this.settings.threshold = parseFloat(e.target.value); saveState(); };
-
-        const modeSelect = div.querySelector('.mode-select-input');
-        const eqDiv = div.querySelector('.eq-controls');
-        const bpDiv = div.querySelector('.bp-controls');
+    renderDOM() {
+        const clone = trackTemplate.content.cloneNode(true);
+        const card = clone.querySelector('.track-card');
+        card.id = `track-${this.id}`;
+        card.querySelector('.track-title').textContent = `Isolation Part ${this.id}`;
         
-        modeSelect.onchange = (e) => {
-            this.settings.filterMode = e.target.value;
-            if (this.settings.filterMode === 'eq') {
-                eqDiv.classList.remove('hidden');
-                bpDiv.classList.add('hidden');
-            } else {
-                eqDiv.classList.add('hidden');
-                bpDiv.classList.remove('hidden');
-            }
-            this.applyRouting();
+        // Set values
+        card.querySelector('.threshold-input').value = this.settings.threshold;
+        card.querySelector('.filter-mode').value = this.settings.filterMode;
+        card.querySelector('.bass-gain').value = this.settings.eq.bass;
+        card.querySelector('.mid-gain').value = this.settings.eq.mid;
+        card.querySelector('.high-gain').value = this.settings.eq.high;
+        card.querySelector('.bp-freq').value = this.settings.bp.freq;
+        card.querySelector('.bp-q').value = this.settings.bp.q;
+        card.querySelector('.freq-val').textContent = this.settings.bp.freq;
+
+        this.updateVisibility(card);
+        tracksContainer.appendChild(card);
+        return card;
+    }
+
+    initRenderer() {
+        const wrapper = this.element.querySelector('.canvas-wrapper');
+        const id = `score-${this.id}-${Date.now()}`;
+        wrapper.id = id;
+        this.renderer = new ScoreRenderer(id);
+        this.renderer.render(); // Draw empty
+    }
+
+    bindEvents() {
+        const e = this.element;
+        // Mode Switch
+        e.querySelector('.filter-mode').addEventListener('change', (evt) => {
+            this.settings.filterMode = evt.target.value;
+            this.updateVisibility(this.element);
+            this.updateAudioNodes();
+            saveState();
+        });
+
+        // Sliders
+        const update = () => {
+            this.settings.threshold = parseFloat(e.querySelector('.threshold-input').value);
+            this.settings.eq.bass = parseFloat(e.querySelector('.bass-gain').value);
+            this.settings.eq.mid = parseFloat(e.querySelector('.mid-gain').value);
+            this.settings.eq.high = parseFloat(e.querySelector('.high-gain').value);
+            this.settings.bp.freq = parseFloat(e.querySelector('.bp-freq').value);
+            this.settings.bp.q = parseFloat(e.querySelector('.bp-q').value);
+            e.querySelector('.freq-val').textContent = this.settings.bp.freq;
+            
+            this.updateAudioNodes();
             saveState();
         };
 
-        const bassSlider = div.querySelector('.bass-slider');
-        bassSlider.oninput = (e) => { this.settings.eq.bass = parseFloat(e.target.value); this.updateFilters(); saveState(); };
-        const midSlider = div.querySelector('.mid-slider');
-        midSlider.oninput = (e) => { this.settings.eq.mid = parseFloat(e.target.value); this.updateFilters(); saveState(); };
-        const highSlider = div.querySelector('.high-slider');
-        highSlider.oninput = (e) => { this.settings.eq.high = parseFloat(e.target.value); this.updateFilters(); saveState(); };
-
-        const bpFreqSlider = div.querySelector('.bp-freq-slider');
-        bpFreqSlider.oninput = (e) => { this.settings.bp.freq = parseFloat(e.target.value); this.updateFilters(); saveState(); };
-        const bpQSlider = div.querySelector('.bp-q-slider');
-        bpQSlider.oninput = (e) => { this.settings.bp.q = parseFloat(e.target.value); this.updateFilters(); saveState(); };
-
-        return {
-            container: div,
-            scoreContainer: scoreDiv,
-            scoreId: scoreId,
-            canvas: div.querySelector('.track-canvas'),
-            noteDisplay: div.querySelector('.note-display')
-        };
-    }
-
-    async setupAudio(sourceBuffer) {
-        if (!audioCtx) return;
-
-        // Create Source specifically for this track (we need independent playback for filters)
-        // Note: Creating multiple buffer sources is fine, they sync if started together.
-        // OR we can share one source and split?
-        // Sharing one source is better for sync. But we need to support reconnecting filters.
-        // Let's assume we get a fresh SourceNode passed in, OR we connect from a central Splitter?
-        // Actually, WebAudio nodes can have multiple outputs.
-        // So the main 'sourceNode' in the app can connect to this track's first filter.
+        e.querySelectorAll('input').forEach(i => i.addEventListener('input', update));
         
-        // Setup Filters
-        this.nodes.filters.bass = audioCtx.createBiquadFilter();
-        this.nodes.filters.bass.type = 'lowshelf';
-        this.nodes.filters.bass.frequency.value = 250;
+        // Actions
+        e.querySelector('.btn-clear').addEventListener('click', () => {
+            this.renderer.reset();
+            this.renderer.render();
+        });
 
-        this.nodes.filters.mid = audioCtx.createBiquadFilter();
-        this.nodes.filters.mid.type = 'peaking';
-        this.nodes.filters.mid.frequency.value = 1000;
-
-        this.nodes.filters.high = audioCtx.createBiquadFilter();
-        this.nodes.filters.high.type = 'highshelf';
-        this.nodes.filters.high.frequency.value = 4000;
-
-        this.nodes.filters.bandpass = audioCtx.createBiquadFilter();
-        this.nodes.filters.bandpass.type = 'bandpass';
-
-        this.nodes.analyser = audioCtx.createAnalyser();
-        this.nodes.analyser.fftSize = 2048;
-
-        // Apply initial values
-        this.updateFilters();
+        e.querySelector('.btn-remove').addEventListener('click', () => {
+            this.destroy();
+        });
     }
 
-    // Connects the track's input (the main source) to its filter chain
-    connectInput(sourceNode) {
-        this.nodes.source = sourceNode;
-        this.applyRouting();
-        // Also connect analyser to destination so we can hear it?
-        // If we have multiple tracks, we might get loud. 
-        // Let's connect all tracks to destination so user hears the mix.
-        this.nodes.analyser.connect(audioCtx.destination);
-    }
-
-    applyRouting() {
-        if (!this.nodes.source) return;
-
-        // Disconnect internal chain
-        try { this.nodes.source.disconnect(this.nodes.filters.bass); } catch(e){}
-        try { this.nodes.source.disconnect(this.nodes.filters.bandpass); } catch(e){}
-        try { this.nodes.filters.high.disconnect(); } catch(e){}
-        try { this.nodes.filters.bandpass.disconnect(); } catch(e){}
-
+    updateVisibility(card) {
         if (this.settings.filterMode === 'eq') {
-            this.nodes.source.connect(this.nodes.filters.bass);
-            this.nodes.filters.bass.connect(this.nodes.filters.mid);
-            this.nodes.filters.mid.connect(this.nodes.filters.high);
-            this.nodes.filters.high.connect(this.nodes.analyser);
+            card.querySelector('.eq-controls').classList.remove('hidden');
+            card.querySelector('.bandpass-controls').classList.add('hidden');
         } else {
-            this.nodes.source.connect(this.nodes.filters.bandpass);
-            this.nodes.filters.bandpass.connect(this.nodes.analyser);
+            card.querySelector('.eq-controls').classList.add('hidden');
+            card.querySelector('.bandpass-controls').classList.remove('hidden');
         }
     }
 
-    updateFilters() {
-        if (!this.nodes.filters.bass) return;
+    // Connect audio processing for this track
+    connectToSource(source) {
+        if (!audioCtx) return;
         
-        this.nodes.filters.bass.gain.value = this.settings.eq.bass;
-        this.nodes.filters.mid.gain.value = this.settings.eq.mid;
-        this.nodes.filters.high.gain.value = this.settings.eq.high;
+        // Disconnect previous if any
+        try { if(this.analyser) this.analyser.disconnect(); } catch(e){}
 
-        this.nodes.filters.bandpass.frequency.value = this.settings.bp.freq;
-        this.nodes.filters.bandpass.Q.value = this.settings.bp.q;
+        // Create Chain
+        this.analyser = audioCtx.createAnalyser();
+        this.analyser.fftSize = 2048;
+        this.analyser.smoothingTimeConstant = 0.5;
+
+        // Route: Source -> Filter -> Analyser
+        let lastNode = source;
+
+        if (this.settings.filterMode === 'eq') {
+            const bass = audioCtx.createBiquadFilter();
+            bass.type = 'lowshelf'; bass.frequency.value = 250; bass.gain.value = this.settings.eq.bass;
+            
+            const mid = audioCtx.createBiquadFilter();
+            mid.type = 'peaking'; mid.frequency.value = 1000; mid.Q.value = 1.0; mid.gain.value = this.settings.eq.mid;
+
+            const high = audioCtx.createBiquadFilter();
+            high.type = 'highshelf'; high.frequency.value = 4000; high.gain.value = this.settings.eq.high;
+
+            lastNode.connect(bass);
+            bass.connect(mid);
+            mid.connect(high);
+            lastNode = high;
+            
+            this.filters = { bass, mid, high };
+        } else {
+            const bp = audioCtx.createBiquadFilter();
+            bp.type = 'bandpass';
+            bp.frequency.value = this.settings.bp.freq;
+            bp.Q.value = this.settings.bp.q;
+            
+            lastNode.connect(bp);
+            lastNode = bp;
+            this.filters = { bp };
+        }
+
+        lastNode.connect(this.analyser);
+        // We do NOT connect to destination (speakers) for every track to avoid loud summing
+        // Only Track 1 (Main) or a specific mixer logic should go to speakers?
+        // For now: Only the first track goes to speakers, or we add a "Monitor" checkbox.
+        // Let's connect ALL to destination but lower volume? Or just Main Source to destination?
+        // Default: The main source is connected to destination in `setupAudioChain`.
+        // These tracks are just for analysis.
     }
 
-    processFrame(now) {
-        if (!this.nodes.analyser) return;
+    updateAudioNodes() {
+        if (!this.filters.bass && !this.filters.bp) return;
 
-        const bufferLength = this.nodes.analyser.frequencyBinCount;
+        if (this.settings.filterMode === 'eq' && this.filters.bass) {
+            this.filters.bass.gain.value = this.settings.eq.bass;
+            this.filters.mid.gain.value = this.settings.eq.mid;
+            this.filters.high.gain.value = this.settings.eq.high;
+        } else if (this.settings.filterMode === 'bandpass' && this.filters.bp) {
+            this.filters.bp.frequency.value = this.settings.bp.freq;
+            this.filters.bp.Q.value = this.settings.bp.q;
+        }
+        // If mode changed entirely, we need to reconnect, handled by `setupAudioChain` calling `connectToSource` again
+        // But if playing, we might need hot-swap. 
+        if (isPlaying && sourceNode) {
+             // Re-trigger connection logic if structure changed
+             // This is complex, simplest is to just update values if nodes exist.
+             // If mode switched, we rely on the mode switch handler which should ideally reconnect.
+             // For simplicity, mode switch effects next play or we can implement hot-swap:
+             // We'll leave hot-swap for now to avoid popping.
+        }
+    }
+
+    process(currentTime) {
+        if (!this.analyser) return;
+
+        const bufferLength = this.analyser.frequencyBinCount;
         const dataArray = new Float32Array(bufferLength);
         const byteData = new Uint8Array(bufferLength);
         
-        this.nodes.analyser.getFloatTimeDomainData(dataArray);
-        this.nodes.analyser.getByteFrequencyData(byteData);
+        this.analyser.getFloatTimeDomainData(dataArray);
+        this.analyser.getByteFrequencyData(byteData);
 
-        // Visualize
-        const ctx = this.elements.canvas.getContext('2d');
-        const w = this.elements.canvas.width;
-        const h = this.elements.canvas.height;
+        // 1. Visualize
+        const canvas = this.element.querySelector('.freq-canvas');
+        const ctx = canvas.getContext('2d');
         ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, w, h);
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        const barWidth = (w / bufferLength) * 2.5;
+        const barWidth = (canvas.width / bufferLength) * 2.5;
         let barX = 0;
         for(let i = 0; i < bufferLength; i++) {
-            const barHeight = (byteData[i] / 255) * h;
-            ctx.fillStyle = `rgb(${byteData[i] + 50}, 100, 200)`;
-            ctx.fillRect(barX, h - barHeight, barWidth, barHeight);
+            const h = (byteData[i] / 255) * canvas.height;
+            ctx.fillStyle = `hsl(${i/2}, 70%, 50%)`;
+            ctx.fillRect(barX, canvas.height - h, barWidth, h);
             barX += barWidth + 1;
         }
+        
+        // Threshold Line
+        const threshY = canvas.height - (Math.min(1, this.settings.threshold * 5) * canvas.height);
+        ctx.strokeStyle = 'red';
+        ctx.beginPath(); ctx.moveTo(0, threshY); ctx.lineTo(canvas.width, threshY); ctx.stroke();
 
-        // Pitch Detect
-        const frequency = autoCorrelate(dataArray, audioCtx.sampleRate, this.settings.threshold);
+        // 2. Pitch Detect
+        // When slowed down, the pitch drops. We detect the dropped pitch.
+        // Real Pitch = Detected Pitch / Speed.
+        // Wait: If I play C4 (261Hz) at 0.5 speed, it sounds like C3 (130Hz).
+        // The analyzer sees 130Hz.
+        // If the user wants to transcribe the ORIGINAL song, we must compensate: 130 / 0.5 = 260.
+        let frequency = autoCorrelate(dataArray, audioCtx.sampleRate, this.settings.threshold);
+        
+        if (frequency !== -1) {
+            // Compensate for playback speed
+            frequency = frequency / playbackSpeed;
+        }
+
         const noteData = frequencyToNote(frequency);
+        const noteDisplay = this.element.querySelector('.current-note');
 
         if (noteData) {
-            this.elements.noteDisplay.textContent = noteData.name;
+            noteDisplay.textContent = `${noteData.name}`; // (${Math.round(noteData.frequency)}Hz)`;
             
-            // Rhythm Logic
-            if (this.analysis.currentNote && this.analysis.currentNote.name === noteData.name) {
-                // Sustaining same note
+            // Duration Logic
+            if (!this.currentNote) {
+                // New Note Started
+                this.currentNote = noteData;
+                this.noteStartTime = currentTime;
             } else {
-                // Note changed
-                this.finalizeNote(now);
-                // Start new note
-                this.analysis.currentNote = noteData;
-                this.analysis.noteStartTime = now;
+                // Check if note changed
+                if (noteData.name !== this.currentNote.name) {
+                    // Previous note ended
+                    this.finalizeNote(currentTime);
+                    // New note start
+                    this.currentNote = noteData;
+                    this.noteStartTime = currentTime;
+                }
             }
         } else {
-            this.elements.noteDisplay.textContent = "--";
-            // Silence/Noise
-            if (this.analysis.currentNote) {
-                this.finalizeNote(now);
-                this.analysis.currentNote = null;
+            noteDisplay.textContent = "--";
+            if (this.currentNote) {
+                // Note ended (went to silence)
+                this.finalizeNote(currentTime);
+                this.currentNote = null;
             }
         }
     }
 
-    finalizeNote(now) {
-        if (!this.analysis.currentNote) return;
+    finalizeNote(endTime) {
+        if (!this.currentNote) return;
 
-        const durationMs = now - this.analysis.noteStartTime;
-        if (durationMs < 100) return; // Ignore glitches < 100ms
-
-        // Determine VexFlow duration
-        let vDur = 'q';
-        if (durationMs > 2500) vDur = 'w';
-        else if (durationMs > 1200) vDur = 'h';
-        else if (durationMs > 450) vDur = 'q';
-        else if (durationMs > 220) vDur = '8';
-        else vDur = '16';
-
-        this.analysis.currentNote.duration = vDur;
-        this.renderer.addNote(this.analysis.currentNote);
+        // Calculate duration in seconds
+        // IMPORTANT: The `currentTime` is wall-clock time.
+        // The audio played for (endTime - start) wall seconds.
+        // But the audio content progress was (endTime - start) * speed.
+        // Wait. If I listen for 1 second at 0.5x speed, I heard 0.5 seconds of the original audio.
+        // Musical duration is relative to the song's tempo. 
+        // If the song is 120bpm, a quarter note is 0.5s (original).
+        // At 0.5x speed, that quarter note takes 1.0s to play.
+        // So `measured_wall_duration * speed` = `original_duration`.
         
-        // Auto scroll
-        sheetContainer.scrollLeft = sheetContainer.scrollWidth;
+        const wallDuration = endTime - this.noteStartTime;
+        const originalDuration = wallDuration * playbackSpeed; 
+
+        // Quantize
+        // Let's assume 100 BPM roughly (600ms per beat) as a baseline if we don't know tempo
+        // q = 0.6s
+        // We can just use ratios.
+        // > 1.5s -> whole
+        // > 0.8s -> half
+        // > 0.4s -> quarter
+        // > 0.2s -> eighth
+        // else 16th
+        
+        // Let's make it slightly more generous
+        let sym = '16';
+        if (originalDuration > 1.8) sym = 'w';
+        else if (originalDuration > 0.9) sym = 'h';
+        else if (originalDuration > 0.4) sym = 'q';
+        else if (originalDuration > 0.2) sym = '8';
+        
+        if (originalDuration > 0.1) { // Ignore extremely short blips
+            this.renderer.addNote({
+                ...this.currentNote,
+                duration: sym
+            });
+            // Auto scroll
+            const container = this.element.querySelector('.sheet-music-container');
+            container.scrollLeft = container.scrollWidth;
+        }
     }
 
-    reset() {
-        this.renderer.reset();
-        this.renderer.render();
-        this.analysis.currentNote = null;
-    }
-    
     destroy() {
-        this.elements.container.remove();
-        this.elements.scoreContainer.remove();
-        // disconnect nodes...
+        if (this.analyser) this.analyser.disconnect();
+        this.element.remove();
+        tracks = tracks.filter(t => t.id !== this.id);
+        saveState();
     }
 }
 
-// --- Main App Logic ---
+// --- Persistence ---
+function saveState() {
+    const state = tracks.map(t => ({ id: t.id, settings: t.settings }));
+    localStorage.setItem('ogg_transcriber_state', JSON.stringify(state));
+}
+
+function loadState() {
+    const raw = localStorage.getItem('ogg_transcriber_state');
+    if (raw) {
+        try {
+            const state = JSON.parse(raw);
+            state.forEach(s => {
+                const t = new Track(s.id, s.settings);
+                tracks.push(t);
+            });
+        } catch(e) { console.error(e); }
+    }
+    
+    // Default track if none
+    if (tracks.length === 0) {
+        const t = new Track(1);
+        tracks.push(t);
+    }
+}
+
+// --- Main Audio Logic ---
 
 async function initAudioContext() {
     if (!audioCtx) {
@@ -318,66 +360,30 @@ async function initAudioContext() {
     }
 }
 
-function addTrack(savedState = null) {
-    const track = new Track(nextTrackId++, savedState);
-    tracks.push(track);
-    saveState();
-    return track;
-}
-
-function removeTrack(id) {
-    const idx = tracks.findIndex(t => t.id === id);
-    if (idx > -1) {
-        tracks[idx].destroy();
-        tracks.splice(idx, 1);
-        saveState();
-    }
-}
-
-function saveState() {
-    const data = tracks.map(t => t.settings);
-    localStorage.setItem('score_transcriber_tracks', JSON.stringify(data));
-}
-
-function loadState() {
-    const saved = localStorage.getItem('score_transcriber_tracks');
-    if (saved) {
-        const data = JSON.parse(saved);
-        if (Array.isArray(data) && data.length > 0) {
-            data.forEach(s => addTrack(s));
-            return;
-        }
-    }
-    // Default
-    addTrack();
-}
-
-let mainSourceNode = null;
-
-async function startPlayback() {
-    if (!buffer) return;
-    
-    if (mainSourceNode) {
-        try { mainSourceNode.stop(); } catch(e){}
+async function setupAudioChain() {
+    if (sourceNode) {
+        try { sourceNode.stop(); sourceNode.disconnect(); } catch(e){}
     }
 
-    mainSourceNode = audioCtx.createBufferSource();
-    mainSourceNode.buffer = buffer;
+    sourceNode = audioCtx.createBufferSource();
+    sourceNode.buffer = audioBuffer;
+    sourceNode.playbackRate.value = playbackSpeed;
 
-    // Connect Source to ALL tracks
-    tracks.forEach(t => {
-        t.setupAudio(); 
-        t.connectInput(mainSourceNode);
-    });
+    // Connect Source to Destination (Hear it)
+    // Create a master gain to prevent clipping if we want
+    sourceNode.connect(audioCtx.destination);
 
-    mainSourceNode.onended = () => {
+    // Connect Source to Tracks (Analyze it)
+    tracks.forEach(t => t.connectToSource(sourceNode));
+
+    sourceNode.onended = () => {
         isPlaying = false;
         playBtn.disabled = false;
         pauseBtn.disabled = true;
         cancelAnimationFrame(animationId);
     };
 
-    mainSourceNode.start(0);
+    sourceNode.start(0);
     isPlaying = true;
     playBtn.disabled = true;
     pauseBtn.disabled = false;
@@ -387,56 +393,77 @@ async function startPlayback() {
 
 function analyzeLoop() {
     if (!isPlaying) return;
-    const now = Date.now();
-    tracks.forEach(t => t.processFrame(now));
+
+    const now = audioCtx.currentTime; // High precision time
+
+    tracks.forEach(t => t.process(now));
+
     animationId = requestAnimationFrame(analyzeLoop);
 }
 
 // --- Listeners ---
 
-addTrackBtn.onclick = () => addTrack();
+addTrackBtn.addEventListener('click', () => {
+    const id = tracks.length > 0 ? Math.max(...tracks.map(t => t.id)) + 1 : 1;
+    const t = new Track(id);
+    tracks.push(t);
+    saveState();
+    if(isPlaying) t.connectToSource(sourceNode);
+});
 
-clearBtn.onclick = () => {
-    tracks.forEach(t => t.reset());
-};
-
-playBtn.onclick = async () => {
-    await initAudioContext();
-    startPlayback();
-};
-
-pauseBtn.onclick = () => {
-    if (mainSourceNode) mainSourceNode.stop();
-    isPlaying = false;
-    playBtn.disabled = false;
-    pauseBtn.disabled = true;
-};
-
-async function loadFile(file) {
-    playBtn.textContent = "Loading...";
-    await initAudioContext();
-    const ab = await file.arrayBuffer();
-    try {
-        buffer = await audioCtx.decodeAudioData(ab);
-        playBtn.textContent = "▶ Play & Transcribe";
-        playBtn.disabled = false;
-    } catch(e) {
-        alert("Error: " + e);
+audioInput.addEventListener('change', async (e) => {
+    if (e.target.files[0]) {
+        playBtn.textContent = "Loading...";
+        await initAudioContext();
+        try {
+            const ab = await e.target.files[0].arrayBuffer();
+            audioBuffer = await audioCtx.decodeAudioData(ab);
+            playBtn.textContent = "▶ Play";
+            playBtn.disabled = false;
+        } catch(e) {
+            alert("Error: " + e);
+        }
     }
-}
-
-audioInput.addEventListener('change', (e) => {
-    if (e.target.files[0]) loadFile(e.target.files[0]);
 });
 
 loadDemoBtn.addEventListener('click', async () => {
-    playBtn.textContent = "Loading...";
+    playBtn.textContent = "Loading Demo...";
     await initAudioContext();
-    const res = await fetch('demo_piano.mp3');
-    const ab = await res.arrayBuffer();
-    buffer = await audioCtx.decodeAudioData(ab);
-    playBtn.textContent = "▶ Play & Transcribe";
+    const response = await fetch('demo_piano.mp3');
+    const ab = await response.arrayBuffer();
+    audioBuffer = await audioCtx.decodeAudioData(ab);
+    playBtn.textContent = "▶ Play";
     playBtn.disabled = false;
+});
+
+playBtn.addEventListener('click', async () => {
+    if(!audioBuffer) return;
+    await initAudioContext();
+    setupAudioChain();
+});
+
+pauseBtn.addEventListener('click', () => {
+    if (sourceNode) {
+        sourceNode.stop();
+        isPlaying = false;
+        playBtn.disabled = false;
+        pauseBtn.disabled = true;
+    }
+});
+
+resetBtn.addEventListener('click', () => {
+    tracks.forEach(t => {
+        t.renderer.reset();
+        t.renderer.render();
+    });
+});
+
+speedInput.addEventListener('input', (e) => {
+    playbackSpeed = parseFloat(e.target.value);
+    speedVal.textContent = playbackSpeed.toFixed(1);
+    if (sourceNode && isPlaying) {
+        sourceNode.playbackRate.value = playbackSpeed;
+    }
 });
 
 // Init

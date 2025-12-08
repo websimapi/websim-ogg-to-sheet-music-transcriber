@@ -27,18 +27,16 @@ export class ScoreRenderer {
         // Add to buffer
         // Vexflow keys format: "c/4"
         const key = `${noteData.note.toLowerCase()}/${noteData.octave}`;
-        
-        // Determine clef approximately
-        let clef = "treble";
-        if (noteData.octave < 4) clef = "bass";
-        
-        // Use detected duration or default to 'q'
         const duration = noteData.duration || "q";
-
+        
+        // Determine clef approximately (simple logic)
+        let clef = "treble"; 
+        
+        // Push note
         this.notesBuffer.push({ keys: [key], duration: duration, clef: clef });
         
-        // Limit buffer to fit on screen roughly (last 16 notes)
-        if (this.notesBuffer.length > 32) {
+        // Limit buffer size to prevent memory issues, but allow more for long sequences
+        if (this.notesBuffer.length > 50) {
             this.notesBuffer.shift();
         }
 
@@ -46,10 +44,18 @@ export class ScoreRenderer {
     }
 
     render() {
+        if (!this.container) return;
         this.container.innerHTML = ""; // Clear SVG
 
-        // Dynamic width based on note count
-        const requiredWidth = Math.max(this.container.clientWidth, this.notesBuffer.length * 40 + 50);
+        // Calculate total beats for width estimation (rough)
+        // q=1, h=2, w=4, 8=0.5, 16=0.25
+        const durMap = { 'w': 4, 'h': 2, 'q': 1, '8': 0.5, '16': 0.25 };
+        let totalBeats = 0;
+        this.notesBuffer.forEach(n => totalBeats += (durMap[n.duration] || 1));
+
+        // Dynamic width
+        const pixelPerBeat = 50;
+        const requiredWidth = Math.max(this.container.clientWidth, totalBeats * pixelPerBeat + 100);
 
         this.vf = new Factory({
             renderer: { elementId: this.container.id, width: requiredWidth, height: this.height }
@@ -67,31 +73,24 @@ export class ScoreRenderer {
             return;
         }
 
-        // Construct VexFlow notes
-        // We will split into chunks of 4 for bars roughly, just for visualization
-        // This is a naive transcription (all quarter notes)
-
-        let notesStr = "";
+        // Map buffer to VexFlow StaveNotes
         const notes = this.notesBuffer.map(n => {
-           return this.vf.StaveNote({ keys: n.keys, duration: n.duration, clef: "treble" }); // Force treble for simplicity of single stave, visually adjust later
+           return this.vf.StaveNote({ keys: n.keys, duration: n.duration, clef: "treble" });
         });
 
-        // To make it look like a continuous stream, we just add one long stave
+        // Continuous stave
         const stave = this.vf.Stave({ x: 10, y: 50, width: requiredWidth - 20 });
         stave.addClef("treble");
 
-        // Create a voice that dynamically fits the number of notes in the buffer
-        // Default is 4/4 which crashes if buffer > 4.
+        // Voice
         const voice = this.vf.Voice({ 
-            num_beats: Math.max(1, this.notesBuffer.length), 
+            num_beats: Math.max(1, totalBeats), 
             beat_value: 4 
         });
         
-        // Disable strict timing to prevent crashes if note durations don't perfectly align
-        voice.setStrict(false);
+        voice.setStrict(false); // Allow arbitrary beats
         voice.addTickables(notes);
 
-        // Formatting
         new Formatter().joinVoices([voice]).format([voice], requiredWidth - 50);
 
         stave.setContext(this.vf.getContext()).draw();
