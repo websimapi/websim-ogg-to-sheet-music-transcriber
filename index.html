@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OGG to Sheet Music Transcriber</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+        {
+            "imports": {
+                "vexflow": "https://esm.sh/vexflow@4.2.3"
+            }
+        }
+    </script>
+</head>
+<body>
+
+    <div class="app-container">
+        <header>
+            <h1>Audio to Score</h1>
+            <p>Load an OGG/Audio file to transcribe to sheet music.</p>
+        </header>
+
+        <div class="controls-area">
+            <div class="file-input-wrapper">
+                <input type="file" id="audioInput" accept=".ogg,.mp3,.wav">
+                <label for="audioInput" class="btn primary">📂 Upload OGG/Audio</label>
+                <button id="loadDemoBtn" class="btn secondary">Load Demo</button>
+            </div>
+            
+            <div class="playback-controls">
+                <button id="playBtn" class="btn action" disabled>▶ Play & Transcribe</button>
+                <button id="pauseBtn" class="btn action" disabled>⏸ Pause</button>
+                <button id="clearBtn" class="btn">Clear Score</button>
+            </div>
+        </div>
+
+        <div class="mixer-area">
+            <h3>Part Isolation / Filters</h3>
+            <p class="small-text">Adjust to isolate specific instrument ranges for detection.</p>
+            <div class="sliders">
+                <div class="slider-group">
+                    <label>Low (Bass)</label>
+                    <input type="range" id="bassGain" min="-30" max="10" value="0">
+                </div>
+                <div class="slider-group">
+                    <label>Mid (Vocals/Lead)</label>
+                    <input type="range" id="midGain" min="-30" max="10" value="0">
+                </div>
+                <div class="slider-group">
+                    <label>High (Treble)</label>
+                    <input type="range" id="highGain" min="-30" max="10" value="0">
+                </div>
+            </div>
+        </div>
+
+        <div class="visualization-area">
+            <canvas id="frequencyCanvas" height="60"></canvas>
+            <div class="note-display">Detected: <span id="currentNote">--</span></div>
+        </div>
+
+        <div class="sheet-music-container" id="sheetContainer">
+            <div id="canvasWrapper"></div>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
+<script defer src="https://static.cloudflareinsights.com/beacon.min.js/v8c78df7c7c0f484497ecbca7046644da1771523124516" integrity="sha512-8DS7rgIrAmghBFwoOTujcf6D9rXvH8xm8JQ1Ja01h9QX8EzXldiszufYa4IFfKdLUKTTrnSFXLDkUEOTrZQ8Qg==" data-cf-beacon='{"version":"2024.11.0","token":"4c6229722a6346bc8eb5cb0e5eae5d41","server_timing":{"name":{"cfCacheStatus":true,"cfEdge":true,"cfExtPri":true,"cfL4":true,"cfOrigin":true,"cfSpeedBrain":true},"location_startswith":null}}' crossorigin="anonymous"></script>
+</body>
+</html>
+

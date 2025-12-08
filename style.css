@@ -1,0 +1,198 @@
+:root {
+    --bg: #121214;
+    --surface: #1e1e24;
+    --primary: #5c6bc0;
+    --accent: #26a69a;
+    --text: #e0e0e0;
+    --border: #333;
+}
+
+* {
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 10px;
+    gap: 10px;
+}
+
+header {
+    text-align: center;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--border);
+}
+
+header h1 {
+    margin: 0;
+    font-size: 1.2rem;
+    color: var(--primary);
+}
+
+header p {
+    margin: 5px 0 0;
+    font-size: 0.8rem;
+    color: #888;
+}
+
+.controls-area {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--surface);
+    padding: 10px;
+    border-radius: 8px;
+}
+
+.file-input-wrapper {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.file-input-wrapper input {
+    display: none;
+}
+
+.btn {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: opacity 0.2s;
+}
+
+.btn:active {
+    opacity: 0.7;
+}
+
+.btn:disabled {
+    background-color: #333;
+    color: #555;
+    cursor: not-allowed;
+}
+
+.btn.primary {
+    background-color: var(--primary);
+    color: white;
+}
+
+.btn.secondary {
+    background-color: transparent;
+    border: 1px solid var(--primary);
+    color: var(--primary);
+}
+
+.btn.action {
+    background-color: var(--accent);
+    color: white;
+    flex: 1;
+}
+
+.playback-controls {
+    display: flex;
+    gap: 8px;
+}
+
+.mixer-area {
+    background: var(--surface);
+    padding: 10px;
+    border-radius: 8px;
+}
+
+.mixer-area h3 {
+    margin: 0 0 5px 0;
+    font-size: 0.9rem;
+}
+
+.small-text {
+    margin: 0 0 10px 0;
+    font-size: 0.75rem;
+    color: #888;
+}
+
+.sliders {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.slider-group {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+}
+
+.slider-group label {
+    font-size: 0.7rem;
+    margin-bottom: 5px;
+}
+
+input[type=range] {
+    width: 100%;
+}
+
+.visualization-area {
+    background: black;
+    border-radius: 8px;
+    position: relative;
+    border: 1px solid var(--border);
+}
+
+#frequencyCanvas {
+    width: 100%;
+    height: 60px;
+    display: block;
+}
+
+.note-display {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: rgba(0,0,0,0.7);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 0.9rem;
+    color: var(--accent);
+}
+
+.sheet-music-container {
+    flex: 1;
+    background: white; /* Sheet music needs white bg */
+    border-radius: 8px;
+    overflow-x: auto;
+    overflow-y: auto;
+    position: relative;
+    padding: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+#canvasWrapper {
+    min-width: 100%;
+    display: flex;
+    flex-wrap: wrap; /* allow wrapping if we implement multiple lines */
+    justify-content: flex-start;
+}
